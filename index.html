@@ -26,12 +26,16 @@
 </head>
 <body>
   <h1>JSON → Steps (Per-Item ZIP)</h1>
-  <p class="muted">No install required. Runs fully in your browser. Upload your JSON.</p>
+  <p class="muted">No install required. Runs fully in your browser. Upload your JSON file.</p>
 
   <div class="card">
     <div class="row">
       <input id="fileInput" type="file" accept="application/json" />
       <button id="processBtn" disabled>Create ZIP</button>
+    </div>
+    <div class="row" style="margin-top:.5rem">
+      <label><input id="optQuote" type="checkbox" checked /> Quote prompt with ></label>
+      <label><input id="optBullets" type="checkbox" checked /> Bullet paragraphs</label>
     </div>
     <p id="status" class="muted">Select a JSON file to begin.</p>
     <details>
@@ -118,7 +122,7 @@
       return blocks.filter(b => b.trim());
     }
 
-    function formatBlockToMd(block) {
+    function formatBlockToMd(block, opts) {
       if (block.trim().startsWith('```')) return block;
       const lines = block.split('\n').map(ln => ln.replace(/\s+$/, ''));
       if (lines.length === 1 && isHeading(lines[0])) {
@@ -140,6 +144,9 @@
         }
         return norm.join('\n');
       }
+      if (!opts?.bullets) {
+        return lines.join('\n').trim();
+      }
       const bullets = [];
       for (const ln of lines) {
         const s = ln.trim();
@@ -157,16 +164,16 @@
       return bullets.join('\n');
     }
 
-    function renderModelTextToMd(title, text) {
+    function renderModelTextToMd(title, text, opts) {
       const out = [ `## ${title}` ];
       for (const block of normalizeTextBlocks(text || '')) {
-        out.push(formatBlockToMd(block));
+        out.push(formatBlockToMd(block, opts));
         out.push('');
       }
       return out.join('\n').trim() + '\n';
     }
 
-    function renderWorkitemMd(item, idx) {
+    function renderWorkitemMd(item, idx, opts) {
       const wi = item || {};
       const wiId = wi.workItemId || String(idx);
       const input = wi.inputData || {};
@@ -177,15 +184,19 @@
       const parts = [ `# WorkItem ${wiId}` ];
       if (prompt) {
         parts.push('## Prompt');
-        parts.push('> ' + prompt.split('\n').map(l => l.trim()).join('\n> '));
+        if (opts?.quotePrompt) {
+          parts.push('> ' + prompt.split('\n').map(l => l.trim()).join('\n> '));
+        } else {
+          parts.push(prompt);
+        }
       }
       if (modelA) {
         parts.push('');
-        parts.push(renderModelTextToMd('Response A', modelA));
+        parts.push(renderModelTextToMd('Response A', modelA, opts));
       }
       if (modelB) {
         parts.push('');
-        parts.push(renderModelTextToMd('Response B', modelB));
+        parts.push(renderModelTextToMd('Response B', modelB, opts));
       }
       return parts.join('\n').trim() + '\n';
     }
@@ -204,7 +215,7 @@
       return s || 'item';
     }
 
-    async function buildZipFromJson(filename, jsonText) {
+  async function buildZipFromJson(filename, jsonText, opts) {
       let data;
       try { data = JSON.parse(jsonText); }
       catch (e) { throw new Error('Invalid JSON: ' + e.message); }
@@ -222,7 +233,7 @@
         const input = wi.inputData || {};
         const baseName = (input.prompt ? sanitizeForFs(input.prompt) : `workitem_${wiId}`);
         const folder = root.folder(`${wiId}-${baseName}`);
-        const md = renderWorkitemMd(item, idx + 1);
+        const md = renderWorkitemMd(item, idx + 1, opts);
         folder.file('index.md', md);
       });
 
@@ -248,7 +259,11 @@
       statusEl.textContent = 'Processing…';
       try {
         const text = await file.text();
-        const res = await buildZipFromJson(file.name, text);
+        const opts = {
+          quotePrompt: document.getElementById('optQuote').checked,
+          bullets: document.getElementById('optBullets').checked,
+        };
+        const res = await buildZipFromJson(file.name, text, opts);
         statusEl.innerHTML = `<span class="ok">Done.</span> Created <span class="mono">${res.zipName}</span> with ${res.count} items.`;
       } catch (err) {
         statusEl.innerHTML = `<span class="err">Error:</span> ${err.message}`;
