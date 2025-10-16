@@ -40,18 +40,21 @@
     <p id="status" class="muted">Select a JSON file to begin.</p>
     <details>
       <summary>Expected JSON shape</summary>
-      <pre class="mono">{
-  "workitems": [
-    {
-      "workItemId": "1",
-      "inputData": {
-        "prompt": "...",
-        "model_a": "...",
-        "model_b": "..."
+      <pre class="mono">[{
+  "promptTurn": {
+    "prompt": "...",
+    "promptedByRole": "User",
+    "responses": [
+      {
+        "modelId": "...",
+        "modelName": "...",
+        "respondedByRole": "Bot",
+        "responseText": "...",
+        "errorMessage": ""
       }
-    }
-  ]
-}</pre>
+    ]
+  }
+}]</pre>
     </details>
   </div>
 
@@ -174,14 +177,11 @@
     }
 
     function renderWorkitemMd(item, idx, opts) {
-      const wi = item || {};
-      const wiId = wi.workItemId || String(idx);
-      const input = wi.inputData || {};
-      const prompt = (input.prompt || '').trim();
-      const modelA = (input.model_a || '').trim();
-      const modelB = (input.model_b || '').trim();
+      const promptTurn = item?.promptTurn || {};
+      const prompt = (promptTurn.prompt || '').trim();
+      const responses = Array.isArray(promptTurn.responses) ? promptTurn.responses : [];
 
-      const parts = [ `# WorkItem ${wiId}` ];
+      const parts = [ `# Prompt Turn ${idx}` ];
       if (prompt) {
         parts.push('## Prompt');
         if (opts?.quotePrompt) {
@@ -190,14 +190,30 @@
           parts.push(prompt);
         }
       }
-      if (modelA) {
-        parts.push('');
-        parts.push(renderModelTextToMd('Response A', modelA, opts));
-      }
-      if (modelB) {
-        parts.push('');
-        parts.push(renderModelTextToMd('Response B', modelB, opts));
-      }
+      
+      responses.forEach((response, respIdx) => {
+        const modelName = response.modelName || response.modelId || `Model ${respIdx + 1}`;
+        const responseText = response.responseText || '';
+        
+        // Try to parse responseText as JSON if it looks like JSON
+        let content = responseText;
+        try {
+          if (responseText.trim().startsWith('{')) {
+            const parsed = JSON.parse(responseText);
+            // Use responseTextComplete or responseTextInstruct if available
+            content = parsed.responseTextComplete || parsed.responseTextInstruct || responseText;
+          }
+        } catch (e) {
+          // If parsing fails, use original text
+          content = responseText;
+        }
+        
+        if (content.trim()) {
+          parts.push('');
+          parts.push(renderModelTextToMd(`Response: ${modelName}`, content.trim(), opts));
+        }
+      });
+      
       return parts.join('\n').trim() + '\n';
     }
 
@@ -219,20 +235,29 @@
       let data;
       try { data = JSON.parse(jsonText); }
       catch (e) { throw new Error('Invalid JSON: ' + e.message); }
-      const workitems = Array.isArray(data?.workitems) ? data.workitems : [];
-      if (!workitems.length) throw new Error('No workitems found in JSON.');
+      
+      // Support both array format and workitems format
+      let promptTurns = [];
+      if (Array.isArray(data)) {
+        promptTurns = data;
+      } else if (Array.isArray(data?.workitems)) {
+        promptTurns = data.workitems;
+      } else if (data?.promptTurn) {
+        promptTurns = [data];
+      }
+      
+      if (!promptTurns.length) throw new Error('No prompt turns found in JSON.');
 
       const zip = new JSZip();
       const base = filename.replace(/\.[^/.]+$/, '');
       const outRoot = `${base}_steps`;
       const root = zip.folder(outRoot);
 
-      workitems.forEach((item, idx) => {
-        const wi = item || {};
-        const wiId = wi.workItemId || String(idx + 1);
-        const input = wi.inputData || {};
-        const baseName = (input.prompt ? sanitizeForFs(input.prompt) : `workitem_${wiId}`);
-        const folder = root.folder(`${wiId}-${baseName}`);
+      promptTurns.forEach((item, idx) => {
+        const promptTurn = item?.promptTurn || {};
+        const prompt = promptTurn.prompt || '';
+        const baseName = (prompt ? sanitizeForFs(prompt) : `prompt_turn_${idx + 1}`);
+        const folder = root.folder(`${idx + 1}-${baseName}`);
         const md = renderWorkitemMd(item, idx + 1, opts);
         folder.file('index.md', md);
       });
@@ -240,7 +265,7 @@
       const blob = await zip.generateAsync({ type: 'blob' });
       const zipName = `${outRoot}.zip`;
       saveAs(blob, zipName);
-      return { count: workitems.length, zipName };
+      return { count: promptTurns.length, zipName };
     }
 
     const fileInput = document.getElementById('fileInput');
