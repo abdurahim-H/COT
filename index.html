@@ -233,7 +233,11 @@
 
   async function buildZipFromJson(filename, jsonText, opts) {
       let data;
-      try { data = JSON.parse(jsonText); }
+      try { 
+        // Clean control characters from JSON text
+        const cleanedText = jsonText.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+        data = JSON.parse(cleanedText); 
+      }
       catch (e) { throw new Error('Invalid JSON: ' + e.message); }
       
       // Support both array format and workitems format
